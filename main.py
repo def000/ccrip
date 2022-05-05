@@ -16,10 +16,10 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from pygments import highlight
 import requests
 import json
 import m3u8
+import youtube_dl
 
 from bs4 import BeautifulSoup
 from lxml import etree
@@ -59,17 +59,25 @@ def download_episode(ep_url: str):
         # Normally we'd use max() here but then there would be no way to track the URI
         # (well, there *is* a way, but this one is cleaner...)
         highest_resolution = 0
+
         feed_source = ""
 
         for playlist in playlists.playlists:
 
             feed_resolution = playlist.stream_info.resolution[0]
 
-            if feed_source > highest_resolution:
+            if feed_resolution > highest_resolution:
 
                 highest_resolution = feed_resolution
 
                 feed_source = playlist.absolute_uri
+        
+        with youtube_dl.YoutubeDL({
+            'format': 'bestaudio/best',
+            'output': 'Test%(ext)s'
+        }) as ydl:
+            ydl.download([feed_source])
+
 
 
 def download_season():
