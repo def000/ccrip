@@ -150,5 +150,3 @@ def download_episode(ep_url: str):
 
 def download_season():
     pass
-
-download_episode("https://www.southparkstudios.com/episodes/jgvuoc/south-park-cripple-fight-season-5-ep-2")
