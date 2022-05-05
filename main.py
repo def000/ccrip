@@ -16,8 +16,21 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-def download_episode(url: str):
-    pass
+import requests
+import json
+
+from bs4 import BeautifulSoup
+from lxml import etree
+
+
+def download_episode(ep_url: str):
+    response = requests.get(ep_url)
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    dom = etree.HTML(str(soup))
+    
+    episode_data = json.loads(dom.xpath('/html/body/div[1]/main/div/div[1]/script')[0].text)
 
 
 def download_season():
