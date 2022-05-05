@@ -20,9 +20,21 @@ import requests
 import json
 import m3u8
 import youtube_dl
+import subprocess
+import os
 
 from bs4 import BeautifulSoup
 from lxml import etree
+from dataclasses import dataclass
+
+
+@dataclass
+class Episode:
+    id: str
+    url: str
+    title: str
+    season: int
+    episode: int
 
 
 MTVN_EPISODE_DATA_URL = "https://media.mtvnservices.com/pmt/e1/access/index.html?uri=mgid:arc:episode:southpark.intl:{}&configtype=edge&ref={}"
@@ -37,8 +49,17 @@ def download_episode(ep_url: str):
     dom = etree.HTML(str(soup))
     
     episode_data = json.loads(dom.xpath('/html/body/div[1]/main/div/div[1]/script')[0].text)
-    
-    cdn_episode_data = requests.get(MTVN_EPISODE_DATA_URL.format(episode_data['@id'], ep_url)).json()
+
+    # Extract basic data
+    episode = Episode(
+        id=episode_data["@id"],
+        url=episode_data["url"],
+        title=episode_data["name"],
+        season=episode_data["partOfSeason"]["seasonNumber"],
+        episode=episode_data["episodeNumber"]
+    )
+
+    cdn_episode_data = requests.get(MTVN_EPISODE_DATA_URL.format(episode.id, episode.url)).json()
     
     # The South Park video player splits the video into ad-seperated segments,
     # so we have to fetch all of them in order to have the whole episode.
@@ -47,12 +68,23 @@ def download_episode(ep_url: str):
         video_feed_ids.append(feed['group']['category']['id'])
 
     # Download all segments
+    segment_number = 1
+    downloaded_segments = []
     for video_feed_id in video_feed_ids:
         master_feed_data = requests.get(MTVN_MASTER_FEED_DATA_URL.format(video_feed_id)).json()
 
         # Retrieve m3u8 feed
         feed_src_m3u = master_feed_data["package"]["video"]["item"][0]["rendition"][0]["src"]
-        
+
+        # Choose VTT subtitles
+        subtitle_paths = master_feed_data["package"]["video"]["item"][0]["transcript"][0]["typographic"]
+
+        subtitle_path = ""
+        for sub in subtitle_paths:
+            if sub["format"] == "vtt":
+                subtitle_path = sub["src"]
+                break
+
         playlists = m3u8.load(feed_src_m3u)
 
         # a junky way to find the best quality
@@ -72,13 +104,51 @@ def download_episode(ep_url: str):
 
                 feed_source = playlist.absolute_uri
         
+        # Download segment
         with youtube_dl.YoutubeDL({
             'format': 'bestaudio/best',
-            'output': 'Test%(ext)s'
+            'outtmpl': f'{segment_number}.mp4'
         }) as ydl:
+            # There is most likely a better way to do all this, but it works
+
+            info = ydl.extract_info(feed_source)
+            
+            # We download to .mp4 because it is set so automatically, but we delete it afterwards
+            temporary_filename = ydl.prepare_filename(info)
+            subtitle_filename = f"{segment_number}.vtt"
+            
             ydl.download([feed_source])
 
+            # Download .vtt subtitles
+            with open(subtitle_filename, "w") as f:
+                f.write(requests.get(subtitle_path).text)
+
+            # Attach subtitles and convert to mkv
+            subprocess.call(f"ffmpeg -i {temporary_filename} -i {subtitle_filename} -map 0:v -map 0:a -map 1 -metadata:s:s:0 language=eng -c:v copy -c:a copy -c:s srt {segment_number}.mkv", shell=True)
+
+            # Remove temporary .mp4 and subtitle file
+            os.remove(temporary_filename)
+            os.remove(subtitle_filename)
+
+            downloaded_segments.append(f"{segment_number}.mkv")
+
+            segment_number += 1
+    
+    with open("input.txt", "w") as f:
+        for segment in downloaded_segments:
+            f.write(f'file {segment}\n')
+
+    # Stitch all .mkv files together
+    ffmp_str = f"ffmpeg -f concat -i input.txt -codec copy \"S{episode.season}E{episode.episode} - {episode.title}.mkv\""
+    subprocess.call(ffmp_str, shell=True)
+
+    # cleanup
+    os.remove("input.txt")
+    for segment in downloaded_segments:
+        os.remove(segment)
 
 
 def download_season():
     pass
+
+download_episode("https://www.southparkstudios.com/episodes/jgvuoc/south-park-cripple-fight-season-5-ep-2")
